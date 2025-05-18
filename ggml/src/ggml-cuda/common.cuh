@@ -96,7 +96,7 @@
 #endif  // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && CUDART_VERSION >= 11070
 
 #ifdef __CUDA_ARCH_LIST__
-constexpr bool ggml_cuda_has_arch_impl(int) {
+bool ggml_cuda_has_arch_impl(int) {
     return false;
 }
 
@@ -536,6 +536,9 @@ static __device__ __forceinline__ int ggml_cuda_dp4a(const int a, const int b, i
 static __device__ __forceinline__ void ggml_cuda_mad(float & acc, const float v, const float u) {
     acc += v*u;
 }
+
+// TODO: move to ggml-common.h
+static __device__ int8_t kvalues_iq4nl[16] = {-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113};
 
 static __device__ __forceinline__ void ggml_cuda_mad(float & acc, const float2 v, const float2 u) {
     acc += v.x*u.x;
