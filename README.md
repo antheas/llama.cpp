@@ -67,5 +67,5 @@ rm -rf build
 
 cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=ON -DCMAKE_CUDA_STANDARD=14 -DCMAKE_CUDA_STANDARD_REQUIRED=true -DGGML_CPU_ARM_ARCH=armv8-a -DGGML_NATIVE=off
 # takes half an hour or so
-cmake --build build --config Release
+cmake --build build --config Release -j $(nproc)
 ```
