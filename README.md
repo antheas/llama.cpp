@@ -1,5 +1,33 @@
 # Install llama-cpp on Jetson
 
+## Use binaries (easiest)
+You can download precompiled binaries like this:
+```bash
+wget https://github.com/antheas/llama.cpp/releases/download/b5415-forjetson/llama-b5415.tar.gz
+
+tar -zxvf llama-b5415.tar.gz
+./llama-b5415/bin/llama-cli -hf unsloth/gemma-3-1b-it-GGUF:Q4_K_M \
+    --n-gpu-layers 25 -p "Explain quantum entanglement"
+```
+
+## Models
+Here are some models that work:
+```
+TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF
+unsloth/gemma-3-1b-it-GGUF:Q4_K_M
+ggml-org/gemma-3-1b-it-GGUF
+```
+
+## llama server
+You can also run the server, giving you a chatgpt like interface. Run like this:
+```bash
+ssh jetson -L 8080:localhost:8080
+./llama-b5415/bin/llama-server -hf unsloth/gemma-3-1b-it-GGUF:Q4_K_M --n-gpu-layers 99
+# in your local browser, go to http://localhost:8080
+```
+
+Play with `--n-gpu-layers`. The GPU is not very powerful, so offloading some layers to the CPU might help. In general, you should expect around 2.5-7 tokens per second. The gemma models can reason fairly well given their size.
+
 ## Compile latest GCC
 Install latest GCC, here 8.5.0 as per [here](https://gist.github.com/FlorSanders/2cf043f7161f52aa4b18fb3a1ab6022f).
 
