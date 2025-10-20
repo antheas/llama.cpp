@@ -537,9 +537,6 @@ static __device__ __forceinline__ void ggml_cuda_mad(float & acc, const float v,
     acc += v*u;
 }
 
-// TODO: move to ggml-common.h
-static __device__ int8_t kvalues_iq4nl[16] = {-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113};
-
 static __device__ __forceinline__ void ggml_cuda_mad(float & acc, const float2 v, const float2 u) {
     acc += v.x*u.x;
     acc += v.y*u.y;
