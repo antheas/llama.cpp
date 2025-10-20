@@ -1803,19 +1803,6 @@ struct batched_mul_mat_traits<GGML_TYPE_F32> {
 };
 
 template<>
-struct batched_mul_mat_traits<GGML_TYPE_BF16> {
-    using cuda_type = nv_bfloat16;
-    static inline const cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F;
-    static inline const cudaDataType_t data_type = CUDA_R_16BF;
-    static inline const ggml_type ggml_type_val = GGML_TYPE_BF16;
-    static inline const float alpha = 1.0f;
-    static inline const float beta = 0.0f;
-    static inline const void* get_alpha() { static const float val = alpha; return &val; }
-    static inline const void* get_beta() { static const float val = beta; return &val; }
-    static inline auto get_nc_converter(ggml_type src_type) { return ggml_get_to_bf16_nc_cuda(src_type); }
-};
-
-template<>
 struct batched_mul_mat_traits<GGML_TYPE_F16> {
     using cuda_type = half;
     static inline const cublasComputeType_t compute_type = CUBLAS_COMPUTE_16F;
