@@ -13,9 +13,11 @@ cd /usr/local/gcc
 # Here you can use screen*, this will take a while (around 3 hours)
 mkdir build
 cd build
-sudo ../configure -enable-checking=release -enable-languages=c,c++
-make -j6
-make install
+../configure --enable-languages=c,c++ --disable-multilib
+make -j$(nproc)  # Use all CPU cores
+sudo make install
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/local/bin/gcc 100
+sudo update-alternatives --install /usr/bin/g++ g++ /usr/local/bin/g++ 100
 ```
 
 *how to use screen:
@@ -59,6 +61,9 @@ sudo pip3 install -U jetson-stats smbus2 distro # for jtop
 Now you can build with the following command ([instructions](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md), [instructions2](https://gist.github.com/kreier/6871691130ec3ab907dd2815f9313c5d)):
 ```bash
 export PATH=/usr/local/cuda/bin/:/usr/local/gcc/bin:/usr/local/cmake/bin:$PATH
+
+# make sure this folder does not exist
+rm -rf build
 
 cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=ON -DCMAKE_CUDA_STANDARD=14 -DCMAKE_CUDA_STANDARD_REQUIRED=true -DGGML_CPU_ARM_ARCH=armv8-a -DGGML_NATIVE=off
 # takes half an hour or so
