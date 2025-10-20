@@ -34,7 +34,7 @@ template<typename dst_t, typename src_t>
     if (std::is_same<dst_t, src_t>::value) {
         return x;
     } else if (std::is_same<dst_t, half>::value) {
-        return __float2bfloat16(float(x));
+        return __float2half(float(x));
     } else if (std::is_same<dst_t, int32_t>::value) {
         return int32_t(x);
     } else {
