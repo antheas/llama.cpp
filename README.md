@@ -10,7 +10,7 @@ tar -zxvf llama-b5415.tar.gz
     --n-gpu-layers 25 -p "Explain quantum entanglement"
 ```
 
-## Models
+### Models
 Here are some models that work:
 ```
 TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF
@@ -18,7 +18,7 @@ unsloth/gemma-3-1b-it-GGUF:Q4_K_M
 ggml-org/gemma-3-1b-it-GGUF
 ```
 
-## llama server
+### llama server
 You can also run the server, giving you a chatgpt like interface. Run like this:
 ```bash
 ssh jetson -L 8080:localhost:8080
@@ -28,7 +28,8 @@ ssh jetson -L 8080:localhost:8080
 
 Play with `--n-gpu-layers`. The GPU is not very powerful, so offloading some layers to the CPU might help. In general, you should expect around 2.5-7 tokens per second. The gemma models can reason fairly well given their size.
 
-## Compile latest GCC
+## Compile from source (advanced)
+### Compile latest GCC
 Install latest GCC, here 8.5.0 as per [here](https://gist.github.com/FlorSanders/2cf043f7161f52aa4b18fb3a1ab6022f).
 
 ```bash
@@ -56,7 +57,7 @@ screen -S gcc
 # to resume screen session: screen -r gcc
 ```
 
-## Download latest CMAKE
+### Download latest CMAKE
 Cmake downloads can be found on the [website](https://cmake.org/download/). Let's install 4.1.2 for this (at least 3.14 is required).
 ```bash
 wget https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2-linux-aarch64.tar.gz
@@ -71,7 +72,7 @@ sudo tar -zxvf cmake-3.31.9-linux-aarch64.tar.gz --directory=/usr/local/
 sudo mv /usr/local/cmake-3.31.9-linux-aarch64 /usr/local/cmake
 ``` -->
 
-## Download and build llama.cpp
+### Download and build llama.cpp
 Clone llama.cpp repository:
 ```bash
 git clone https://github.com/antheas/llama.cpp
@@ -98,7 +99,7 @@ cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=ON -DCMAKE_CUDA_STANDARD=14 -DCMAKE_C
 cmake --build build --config Release -j $(nproc)
 ```
 
-## Running
+### Running
 Finally, you can run it like this:
 ```bash
 ./build/bin/llama-cli -hf TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF \
