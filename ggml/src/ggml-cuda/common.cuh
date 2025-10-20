@@ -101,15 +101,15 @@ bool ggml_cuda_has_arch_impl(int) {
 }
 
 template<class ... Archs>
-bool ggml_cuda_has_arch_impl(const int arch, const int first, Archs... rest) {
+constexpr bool ggml_cuda_has_arch_impl(const int arch, const int first, Archs... rest) {
     return arch == first || ggml_cuda_has_arch_impl(arch, rest...);
 }
 
-bool ggml_cuda_has_arch(const int arch) {
+constexpr bool ggml_cuda_has_arch(const int arch) {
     return ggml_cuda_has_arch_impl(arch, __CUDA_ARCH_LIST__);
 }
 
-int ggml_cuda_highest_compiled_arch_impl(const int /*arch*/, const int cur) {
+constexpr int ggml_cuda_highest_compiled_arch_impl(const int /*arch*/, const int cur) {
     if (cur == 0) {
         return -1;
     }
@@ -117,7 +117,7 @@ int ggml_cuda_highest_compiled_arch_impl(const int /*arch*/, const int cur) {
 }
 
 template<class ... Archs>
-int ggml_cuda_highest_compiled_arch_impl(const int arch, const int cur, const int first, Archs... rest) {
+constexpr int ggml_cuda_highest_compiled_arch_impl(const int arch, const int cur, const int first, Archs... rest) {
     if (first <= arch && first > cur) {
         return ggml_cuda_highest_compiled_arch_impl(arch, first, rest...);
     } else {
@@ -125,7 +125,7 @@ int ggml_cuda_highest_compiled_arch_impl(const int arch, const int cur, const in
     }
 }
 
-int ggml_cuda_highest_compiled_arch(const int arch) {
+constexpr int ggml_cuda_highest_compiled_arch(const int arch) {
     return ggml_cuda_highest_compiled_arch_impl(arch, 0, __CUDA_ARCH_LIST__);
 }
 #else
@@ -291,7 +291,7 @@ static bool cp_async_available(const int cc) {
     return GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_AMPERE;
 }
 
-static __device__ int ggml_cuda_get_physical_warp_size() {
+static constexpr __device__ int ggml_cuda_get_physical_warp_size() {
 #if defined(GGML_USE_HIP) && (defined(__GFX9__) || defined(__GFX8__))
     return 64;
 #else
@@ -300,7 +300,7 @@ static __device__ int ggml_cuda_get_physical_warp_size() {
 }
 
 // Maximum number of bytes that can be copied in a single instruction.
-static __device__ int ggml_cuda_get_max_cpy_bytes() {
+static constexpr __device__ int ggml_cuda_get_max_cpy_bytes() {
 #ifdef GGML_USE_HIP
     return 16;
 #else
@@ -680,148 +680,148 @@ struct ggml_cuda_type_traits;
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_F16> {
-    static int qk = 1;
-    static int qr = 1;
+    static constexpr int qk = 1;
+    static constexpr int qr = 1;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q4_0> {
-    static int qk = QK4_0;
-    static int qr = QR4_0;
-    static int qi = QI4_0;
+    static constexpr int qk = QK4_0;
+    static constexpr int qr = QR4_0;
+    static constexpr int qi = QI4_0;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q4_1> {
-    static int qk = QK4_1;
-    static int qr = QR4_1;
-    static int qi = QI4_1;
+    static constexpr int qk = QK4_1;
+    static constexpr int qr = QR4_1;
+    static constexpr int qi = QI4_1;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q5_0> {
-    static int qk = QK5_0;
-    static int qr = QR5_0;
-    static int qi = QI5_0;
+    static constexpr int qk = QK5_0;
+    static constexpr int qr = QR5_0;
+    static constexpr int qi = QI5_0;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q5_1> {
-    static int qk = QK5_1;
-    static int qr = QR5_1;
-    static int qi = QI5_1;
+    static constexpr int qk = QK5_1;
+    static constexpr int qr = QR5_1;
+    static constexpr int qi = QI5_1;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q8_0> {
-    static int qk = QK8_0;
-    static int qr = QR8_0;
-    static int qi = QI8_0;
+    static constexpr int qk = QK8_0;
+    static constexpr int qr = QR8_0;
+    static constexpr int qi = QI8_0;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_MXFP4> {
-    static int qk = QK_MXFP4;
-    static int qr = QR_MXFP4;
-    static int qi = QI_MXFP4;
+    static constexpr int qk = QK_MXFP4;
+    static constexpr int qr = QR_MXFP4;
+    static constexpr int qi = QI_MXFP4;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q2_K> {
-    static int qk = QK_K;
-    static int qr = QR2_K;
-    static int qi = QI2_K;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR2_K;
+    static constexpr int qi = QI2_K;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q3_K> {
-    static int qk = QK_K;
-    static int qr = QR3_K;
-    static int qi = QI3_K;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR3_K;
+    static constexpr int qi = QI3_K;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q4_K> {
-    static int qk = QK_K;
-    static int qr = QR4_K;
-    static int qi = QI4_K;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR4_K;
+    static constexpr int qi = QI4_K;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q5_K> {
-    static int qk = QK_K;
-    static int qr = QR5_K;
-    static int qi = QI5_K;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR5_K;
+    static constexpr int qi = QI5_K;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q6_K> {
-    static int qk = QK_K;
-    static int qr = QR6_K;
-    static int qi = QI6_K;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR6_K;
+    static constexpr int qi = QI6_K;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_IQ2_XXS> {
-    static int qk = QK_K;
-    static int qr = QR2_XXS;
-    static int qi = QI2_XXS;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR2_XXS;
+    static constexpr int qi = QI2_XXS;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_IQ2_XS> {
-    static int qk = QK_K;
-    static int qr = QR2_XS;
-    static int qi = QI2_XS;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR2_XS;
+    static constexpr int qi = QI2_XS;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_IQ2_S> {
-    static int qk = QK_K;
-    static int qr = QR2_S;
-    static int qi = QI2_S;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR2_S;
+    static constexpr int qi = QI2_S;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_IQ3_XXS> {
-    static int qk = QK_K;
-    static int qr = QR3_XXS;
-    static int qi = QI3_XXS;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR3_XXS;
+    static constexpr int qi = QI3_XXS;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_IQ1_S> {
-    static int qk = QK_K;
-    static int qr = QR1_S;
-    static int qi = QI1_S;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR1_S;
+    static constexpr int qi = QI1_S;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_IQ1_M> {
-    static int qk = QK_K;
-    static int qr = QR1_M;
-    static int qi = QI1_M;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR1_M;
+    static constexpr int qi = QI1_M;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_IQ4_NL> {
-    static int qk = QK4_NL;
-    static int qr = QR4_NL;
-    static int qi = QI4_NL;
+    static constexpr int qk = QK4_NL;
+    static constexpr int qr = QR4_NL;
+    static constexpr int qi = QI4_NL;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_IQ4_XS> {
-    static int qk = QK_K;
-    static int qr = QR4_XS;
-    static int qi = QI4_XS;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR4_XS;
+    static constexpr int qi = QI4_XS;
 };
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_IQ3_S> {
-    static int qk = QK_K;
-    static int qr = QR3_S;
-    static int qi = QI3_S;
+    static constexpr int qk = QK_K;
+    static constexpr int qr = QR3_S;
+    static constexpr int qi = QI3_S;
 };
 
 //////////////////////
