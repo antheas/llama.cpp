@@ -1,6 +1,6 @@
 # Install llama-cpp on Jetson
 
-# Compile latest GCC
+## Compile latest GCC
 Install latest GCC, here 8.5.0 as per [here](https://gist.github.com/FlorSanders/2cf043f7161f52aa4b18fb3a1ab6022f).
 
 ```bash
@@ -28,7 +28,7 @@ screen -S gcc
 # to resume screen session: screen -r gcc
 ```
 
-# Download latest CMAKE
+## Download latest CMAKE
 Cmake downloads can be found on the [website](https://cmake.org/download/). Let's install 4.1.2 for this (at least 3.14 is required).
 ```bash
 wget https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2-linux-aarch64.tar.gz
@@ -43,7 +43,7 @@ sudo tar -zxvf cmake-3.31.9-linux-aarch64.tar.gz --directory=/usr/local/
 sudo mv /usr/local/cmake-3.31.9-linux-aarch64 /usr/local/cmake
 ``` -->
 
-# Download and build llama.cpp
+## Download and build llama.cpp
 Clone llama.cpp repository:
 ```bash
 git clone https://github.com/antheas/llama.cpp
@@ -68,4 +68,11 @@ rm -rf build
 cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=ON -DCMAKE_CUDA_STANDARD=14 -DCMAKE_CUDA_STANDARD_REQUIRED=true -DGGML_CPU_ARM_ARCH=armv8-a -DGGML_NATIVE=off
 # takes half an hour or so
 cmake --build build --config Release -j $(nproc)
+```
+
+## Running
+Finally, you can run it like this:
+```bash
+./build/bin/llama-cli -hf TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF \
+    --n-gpu-layers 25 -p "Explain quantum entanglement"
 ```
