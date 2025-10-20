@@ -10,7 +10,7 @@ sudo mv /usr/local/gcc-8.5.0 /usr/local/gcc
 cd /usr/local/gcc
 ./contrib/download_prerequisites
 
-# Here you can use screen*, this will take a while
+# Here you can use screen*, this will take a while (around 3 hours)
 mkdir build
 cd build
 sudo ../configure -enable-checking=release -enable-languages=c,c++
@@ -59,4 +59,6 @@ Now you can build with the following command ([instructions](https://github.com/
 export PATH=/usr/local/cuda/bin/:/usr/local/gcc/bin:/usr/local/cmake/bin:$PATH
 
 cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=ON -DCMAKE_CUDA_STANDARD=14 -DCMAKE_CUDA_STANDARD_REQUIRED=true -DGGML_CPU_ARM_ARCH=armv8-a -DGGML_NATIVE=off
+# takes half an hour or so
+cmake --build build --config Release
 ```
