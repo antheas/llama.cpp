@@ -23,6 +23,21 @@ static __device__ __forceinline__ float op_div(const float a, const float b) {
     return a / b;
 }
 
+// C++14-friendly variadic applier:
+// - If only one pointer is passed, use it (the 'src1' case).
+// - If two or more pointers are passed, ignore the first and apply over the rest (the 'src1_ptrs...' case).
+template <float (*op)(const float, const float), typename P0>
+static __device__ __forceinline__ float ggml_cuda_apply_bin(float result, size_t idx, const P0 * p0) {
+    return op(result, (float) p0[idx]);
+}
+
+template <float (*op)(const float, const float), typename P0, typename P1, typename... Rest>
+static __device__ __forceinline__ float ggml_cuda_apply_bin(float result, size_t idx, const P0 * /*p0*/, const P1 * p1, const Rest * ... rest) {
+    int dummy[] = { (result = op(result, (float) p1[idx]), 0), (result = op(result, (float) rest[idx]), 0)... };
+    (void) dummy;
+    return result;
+}
+
 template <float (*bin_op)(const float, const float),
           typename src0_t,
           typename src1_t,
@@ -73,11 +88,10 @@ static __global__ void k_bin_bcast(const src0_t *         src0,
         const uint32_t i10 = fastmodulo(i0, ne10);
 
         float result = src0_row ? (float) src0_row[i0] : 0.0f;
-        if constexpr (sizeof...(src1_ptrs) > 0) {
-            result = (..., (result = bin_op(result, (float)src1s[i_src1 + i10])));
-        } else {
-            result = bin_op(result, (float)src1[i_src1 + i10]);
-        }
+        const size_t idx    = i_src1 + i10;
+
+        // C++14-friendly dispatch that mirrors the original semantics
+        result = ggml_cuda_apply_bin<bin_op>(result, idx, src1, src1s...);
 
         dst_row[i0] = (dst_t) result;
     }
@@ -136,11 +150,10 @@ static __global__ void k_bin_bcast_unravel(const src0_t *         src0,
     const int i10 = fastmodulo(i0, ne10);
 
     float result = src0_row ? (float) src0_row[i0] : 0.0f;
-    if constexpr (sizeof...(src1_ptrs) > 0) {
-        result = (..., (result = bin_op(result, (float)src1s[i_src1 + i10])));
-    } else {
-        result = bin_op(result, (float)src1[i_src1 + i10]);
-    }
+    const size_t idx = i_src1 + i10;
+
+    // C++14-friendly dispatch that mirrors the original semantics
+    result = ggml_cuda_apply_bin<bin_op>(result, idx, src1, src1s...);
 
     dst_row[i0] = (dst_t) result;
 }
