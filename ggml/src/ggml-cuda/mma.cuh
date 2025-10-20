@@ -169,11 +169,11 @@ namespace ggml_cuda_mma {
     };
 
     template <int I_, int J_>
-    struct tile<I_, J_, nv_bfloat162> {
+    struct tile<I_, J_, half> {
         static constexpr int I  = I_;
         static constexpr int J  = J_;
         static constexpr int ne = I * J / WARP_SIZE;
-        nv_bfloat162 x[ne] = {{0.0f, 0.0f}};
+        half x[ne] = {{0.0f, 0.0f}};
 
         static __device__ __forceinline__ int get_i(const int l) {
             if constexpr (I == 8 && J == 8) {
@@ -447,7 +447,7 @@ namespace ggml_cuda_mma {
     }
 
     static __device__ __forceinline__ void mma(
-            tile<16, 8, float> & D, const tile<16, 8, nv_bfloat162> & A, const tile<8, 8, nv_bfloat162> & B) {
+            tile<16, 8, float> & D, const tile<16, 8, half> & A, const tile<8, 8, half> & B) {
 #ifdef AMPERE_MMA_AVAILABLE
         const int * Axi = (const int *) A.x;
         const int * Bxi = (const int *) B.x;
