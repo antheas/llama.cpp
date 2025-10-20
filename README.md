@@ -53,7 +53,7 @@ Some niceties and dependencies (libcurl4 is required).
 ```bash
 sudo apt update
 sudo apt install nano curl libcurl4-openssl-dev python3-pip htop
-sudo pip3 install -U jetson-stats
+sudo pip3 install -U jetson-stats # for jtop
 ```
 
 Now you can build with the following command ([instructions](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md), [instructions2](https://gist.github.com/kreier/6871691130ec3ab907dd2815f9313c5d)):
