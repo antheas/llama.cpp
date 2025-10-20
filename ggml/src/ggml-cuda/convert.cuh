@@ -32,11 +32,11 @@ to_bf16_nc_cuda_t ggml_get_to_bf16_nc_cuda(ggml_type type);
 
 template<typename dst_t, typename src_t>
  __host__ __device__ inline dst_t ggml_cuda_cast(src_t x) {
-    if (std::is_same_v<dst_t, src_t>) {
+    if (std::is_same<dst_t, src_t>) {
         return x;
-    } else if (std::is_same_v<dst_t, half>) {
+    } else if (std::is_same<dst_t, half>) {
         return __float2bfloat16(float(x));
-    } else if (std::is_same_v<dst_t, int32_t>) {
+    } else if (std::is_same<dst_t, int32_t>) {
         return int32_t(x);
     } else {
         return float(x);
