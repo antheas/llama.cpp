@@ -49,9 +49,11 @@ cd llama.cpp
 git checkout jetson
 ```
 
-Install the dependencies
+Some niceties and dependencies (libcurl4 is required).
 ```bash
-sudo apt-get install libcurl4-openssl-dev
+sudo apt update
+sudo apt install nano curl libcurl4-openssl-dev python3-pip htop
+sudo pip3 install -U jetson-stats
 ```
 
 Now you can build with the following command ([instructions](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md), [instructions2](https://gist.github.com/kreier/6871691130ec3ab907dd2815f9313c5d)):
