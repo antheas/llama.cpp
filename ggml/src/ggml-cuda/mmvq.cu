@@ -137,8 +137,24 @@ static constexpr __host__ __device__ int calc_rows_per_block(int ncols_dst, int 
     return 1;
 }
 
+// Returns the byte size of a quant block for prefetching purposes.
+template <ggml_type type>
+static __device__ __forceinline__ constexpr size_t mmvq_type_block_size() {
+    if constexpr (type == GGML_TYPE_Q4_0)  { return sizeof(block_q4_0); }
+    else if constexpr (type == GGML_TYPE_Q4_1)  { return sizeof(block_q4_1); }
+    else if constexpr (type == GGML_TYPE_Q5_0)  { return sizeof(block_q5_0); }
+    else if constexpr (type == GGML_TYPE_Q5_1)  { return sizeof(block_q5_1); }
+    else if constexpr (type == GGML_TYPE_Q8_0)  { return sizeof(block_q8_0); }
+    else if constexpr (type == GGML_TYPE_Q2_K)  { return sizeof(block_q2_K); }
+    else if constexpr (type == GGML_TYPE_Q3_K)  { return sizeof(block_q3_K); }
+    else if constexpr (type == GGML_TYPE_Q4_K)  { return sizeof(block_q4_K); }
+    else if constexpr (type == GGML_TYPE_Q5_K)  { return sizeof(block_q5_K); }
+    else if constexpr (type == GGML_TYPE_Q6_K)  { return sizeof(block_q6_K); }
+    else { return 0; }
+}
+
 template <ggml_type type, int ncols_dst, bool has_fusion, bool is_multi_token_id = false>
-__launch_bounds__(calc_nwarps(ncols_dst, get_device_table_id())*ggml_cuda_get_physical_warp_size(), 1)
+__launch_bounds__(calc_nwarps(ncols_dst, get_device_table_id())*ggml_cuda_get_physical_warp_size(), ncols_dst == 1 ? 12 : 1)
 static __global__ void mul_mat_vec_q(
         const void * __restrict__ vx, const void * __restrict__ vy, const int32_t * __restrict__ ids, const ggml_cuda_mm_fusion_args_device fusion, float * __restrict__ dst,
         const uint32_t ncols_x, const uint3 nchannels_y, const uint32_t stride_row_x, const uint32_t stride_col_y,
@@ -241,11 +257,22 @@ static __global__ void mul_mat_vec_q(
     }
     const int kbx_offset = sample_x*stride_sample_x + channel_x*stride_channel_x + row0*stride_row_x;
 
-    for (int kbx = tid / (qi/vdr); kbx < blocks_per_row_x; kbx += blocks_per_iter) {
-        const int kby = kbx * (qk/QK8_1); // y block index that aligns with kbx
+    // x block quant index when casting the quants to int (loop-invariant, hoisted)
+    const int kqs = vdr * (tid % (qi/vdr));
 
-        // x block quant index when casting the quants to int
-        const int kqs = vdr * (tid % (qi/vdr));
+    constexpr size_t block_bytes = mmvq_type_block_size<type>();
+
+    for (int kbx = tid / (qi/vdr); kbx < blocks_per_row_x; kbx += blocks_per_iter) {
+        // Prefetch next iteration's weight block into L2 cache
+        if constexpr (block_bytes > 0) {
+            const int kbx_next = kbx + blocks_per_iter;
+            if (kbx_next < blocks_per_row_x) {
+                const char * next_addr = (const char *)vx + (size_t)(kbx_offset + kbx_next) * block_bytes;
+                asm volatile("prefetch.global.L2 [%0];" :: "l"(next_addr));
+            }
+        }
+
+        const int kby = kbx * (qk/QK8_1); // y block index that aligns with kbx
 
 #pragma unroll
         for (int j = 0; j < ncols_dst; ++j) {
