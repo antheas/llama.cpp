@@ -19,8 +19,10 @@ static __global__ void timestep_embedding_f32(const float * timesteps, float * d
     float timestep = timesteps[i];
     float freq = (float)expf(-logf(max_period) * j / half);
     float arg = timestep * freq;
-    embed_data[j] = cosf(arg);
-    embed_data[j + half] = sinf(arg);
+    float sin_arg, cos_arg;
+    sincosf(arg, &sin_arg, &cos_arg);
+    embed_data[j] = cos_arg;
+    embed_data[j + half] = sin_arg;
 }
 
 static void timestep_embedding_f32_cuda(const float * x, float * dst, const int ne00, const int nb1,
