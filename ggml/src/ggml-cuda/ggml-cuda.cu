@@ -2159,8 +2159,10 @@ static bool ggml_cuda_should_fuse_mul_mat_vec_q(const ggml_tensor * tensor) {
     if (cc <= GGML_CUDA_CC_PASCAL) {
         return false;
     }
-    //we only support fusion for ncols_dst = 1
-    if (tensor->op == GGML_OP_MUL_MAT && dst->ne[1] != 1) {
+
+    // Fusion for ncols_dst <= 4 uses single-pass approach (up+gate in same loop).
+    // For ncols_dst > 4, the GLU is fused into the downstream MMQ quantize step instead.
+    if (tensor->op == GGML_OP_MUL_MAT && dst->ne[1] > 4) {
         return false;
     }
 
@@ -3468,6 +3470,66 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                 stream_ctx.concurrent_events.clear();
             }
 
+            // Pre-scan: find ADD nodes whose output feeds into RMS_NORM+MUL fusions.
+            // These ADD nodes will be deferred and computed inline by the fused kernel,
+            // saving one full tensor write+read round trip through DRAM.
+            std::unordered_set<ggml_tensor*> deferred_add_nodes;
+            {
+                static bool prescan_disable_fusion = (getenv("GGML_CUDA_DISABLE_FUSION") != nullptr);
+                if (!prescan_disable_fusion) {
+                    // Build node -> position map for safety checks
+                    std::unordered_map<ggml_tensor*, int> node_pos;
+                    node_pos.reserve(cgraph->n_nodes);
+                    for (int j = 0; j < cgraph->n_nodes; j++) {
+                        node_pos[cgraph->nodes[j]] = j;
+                    }
+
+                    for (int j = 0; j + 1 < cgraph->n_nodes; j++) {
+                        ggml_tensor * rms_node = cgraph->nodes[j];
+                        if (rms_node->op != GGML_OP_RMS_NORM) continue;
+                        if ((rms_node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) continue;
+
+                        ggml_tensor * mul_node = cgraph->nodes[j + 1];
+                        if (mul_node->op != GGML_OP_MUL) continue;
+                        if ((mul_node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) continue;
+                        if (mul_node->src[0] != rms_node && mul_node->src[1] != rms_node) continue;
+
+                        // Check if RMS_NORM's input is an ADD node
+                        ggml_tensor * add_node = rms_node->src[0];
+                        if (!add_node || add_node->op != GGML_OP_ADD) continue;
+                        if ((add_node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) continue;
+                        if (deferred_add_nodes.count(add_node)) continue;
+
+                        // Type and shape checks
+                        if (add_node->src[0]->type != GGML_TYPE_F32 || add_node->src[1]->type != GGML_TYPE_F32) continue;
+                        if (add_node->type != GGML_TYPE_F32 || rms_node->type != GGML_TYPE_F32 || mul_node->type != GGML_TYPE_F32) continue;
+                        if (!ggml_are_same_shape(add_node->src[0], add_node->src[1])) continue;
+                        if (!ggml_is_contiguous(add_node->src[0]) || !ggml_is_contiguous(add_node->src[1])) continue;
+                        if (!ggml_is_contiguous_rows(mul_node->src[0]) || !ggml_is_contiguous_rows(mul_node->src[1])) continue;
+
+                        // Find ADD's position in graph
+                        auto it = node_pos.find(add_node);
+                        if (it == node_pos.end() || it->second >= j) continue;
+                        int add_pos = it->second;
+
+                        // Safety: no node between ADD and RMS_NORM should use the ADD output
+                        bool safe = true;
+                        for (int k = add_pos + 1; k < j && safe; k++) {
+                            ggml_tensor * n = cgraph->nodes[k];
+                            for (int s = 0; s < GGML_MAX_SRC && n->src[s]; s++) {
+                                if (n->src[s] == add_node) {
+                                    safe = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!safe) continue;
+
+                        deferred_add_nodes.insert(add_node);
+                    }
+                }
+            }
+
             for (int i = 0; i < cgraph->n_nodes; i++) {
                 ggml_tensor * node = cgraph->nodes[i];
                 if (is_concurrent_event_active) {
@@ -3513,6 +3575,11 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                 }
 
                 if ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
+                    continue;
+                }
+
+                // Skip ADD nodes that will be computed inline by a fused RMS_NORM+MUL kernel
+                if (!deferred_add_nodes.empty() && deferred_add_nodes.count(node)) {
                     continue;
                 }
 
@@ -3715,6 +3782,20 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                                 fused_node_count = 5;
                                 break;
                             }
+
+                            // For large batch sizes (PP/MMQ path), skip the GLU node.
+                            // Only do this when batch size > MMVQ_MAX_BATCH_SIZE (MMQ path),
+                            // since MMVQ doesn't support fused GLU+quantize.
+                            if (src1->ne[1] > MMVQ_MAX_BATCH_SIZE) {
+                                for (int k = 0; k < 4; k++) {
+                                    ggml_cuda_compute_forward(*cuda_ctx, cgraph->nodes[i + k]);
+                                }
+                                // GLU (nodes[i+4]) is skipped
+                                fused_mul_mat_vec = true;
+                                fused_node_count = 5;
+                                break;
+                            }
+                            continue;
                         } else if (ggml_cuda_can_fuse(cgraph, i, { op, op, GGML_OP_GLU }, {})) {
                             ggml_tensor * glu  = cgraph->nodes[i + 2];
                             ggml_tensor * gate = glu->src[0];
@@ -3750,6 +3831,21 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                                 fused_node_count = 3;
                                 break;
                             }
+
+                            // For large batch sizes (PP/MMQ path), skip the GLU node.
+                            // The downstream MUL_MAT (down_proj) will detect src1->op == GGML_OP_GLU
+                            // and use a fused GLU+quantize kernel, eliminating the separate GLU kernel.
+                            // Only do this when batch size > MMVQ_MAX_BATCH_SIZE (MMQ path),
+                            // since MMVQ doesn't support fused GLU+quantize.
+                            if (src1->ne[1] > MMVQ_MAX_BATCH_SIZE) {
+                                ggml_cuda_compute_forward(*cuda_ctx, cgraph->nodes[i]);
+                                ggml_cuda_compute_forward(*cuda_ctx, cgraph->nodes[i + 1]);
+                                // GLU (nodes[i+2]) is skipped
+                                fused_mul_mat_vec = true;
+                                fused_node_count = 3;
+                                break;
+                            }
+                            continue;
                         }
                     }
 
@@ -3829,6 +3925,12 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                     }
 
                     if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL}, {})) {
+                        // Check if the RMS_NORM input is a deferred ADD (pre-add fusion)
+                        if (!deferred_add_nodes.empty() && deferred_add_nodes.count(node->src[0])) {
+                            ggml_cuda_op_rms_norm_pre_add_fused(*cuda_ctx, node->src[0], node, cgraph->nodes[i+1]);
+                            i++;
+                            continue;
+                        }
                         ggml_cuda_op_rms_norm_fused(*cuda_ctx, node, cgraph->nodes[i+1]);
                         i++;
                         continue;
