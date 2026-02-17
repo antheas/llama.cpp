@@ -83,6 +83,99 @@
 #include <vector>
 #include <unordered_set>
 
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+#include <dlfcn.h>
+
+// NVML types and function pointers for dynamic loading (DVFS support)
+typedef enum { NVML_SUCCESS = 0 } nvml_return_t;
+typedef void * nvml_device_t;
+typedef nvml_return_t (*nvml_init_fn)(void);
+typedef nvml_return_t (*nvml_shutdown_fn)(void);
+typedef nvml_return_t (*nvml_device_get_handle_fn)(unsigned int, nvml_device_t *);
+typedef nvml_return_t (*nvml_device_set_gpu_locked_clocks_fn)(nvml_device_t, unsigned int, unsigned int);
+typedef nvml_return_t (*nvml_device_reset_gpu_locked_clocks_fn)(nvml_device_t);
+
+struct ggml_nvml_state {
+    void * lib_handle = nullptr;
+    nvml_device_t device = nullptr;
+    nvml_shutdown_fn shutdown = nullptr;
+    nvml_device_reset_gpu_locked_clocks_fn reset_clocks = nullptr;
+    bool clocks_locked = false;
+};
+static ggml_nvml_state g_nvml_state;
+
+static void ggml_nvml_cleanup() {
+    if (g_nvml_state.clocks_locked && g_nvml_state.reset_clocks && g_nvml_state.device) {
+        g_nvml_state.reset_clocks(g_nvml_state.device);
+        GGML_LOG_INFO("%s: GPU clocks reset to default\n", __func__);
+    }
+    if (g_nvml_state.shutdown) {
+        g_nvml_state.shutdown();
+    }
+    if (g_nvml_state.lib_handle) {
+        dlclose(g_nvml_state.lib_handle);
+    }
+    g_nvml_state = {};
+}
+
+static void ggml_nvml_set_gpu_clocks(int device_id, unsigned int clock_mhz) {
+    void * lib = dlopen("libnvidia-ml.so.1", RTLD_NOW);
+    if (!lib) {
+        lib = dlopen("libnvidia-ml.so", RTLD_NOW);
+    }
+    if (!lib) {
+        GGML_LOG_WARN("%s: could not load libnvidia-ml.so, GPU clock management unavailable\n", __func__);
+        return;
+    }
+    g_nvml_state.lib_handle = lib;
+
+    auto init_fn          = (nvml_init_fn)dlsym(lib, "nvmlInit_v2");
+    auto get_handle_fn    = (nvml_device_get_handle_fn)dlsym(lib, "nvmlDeviceGetHandleByIndex_v2");
+    auto set_clocks_fn    = (nvml_device_set_gpu_locked_clocks_fn)dlsym(lib, "nvmlDeviceSetGpuLockedClocks");
+    auto reset_clocks_fn  = (nvml_device_reset_gpu_locked_clocks_fn)dlsym(lib, "nvmlDeviceResetGpuLockedClocks");
+    auto shutdown_fn      = (nvml_shutdown_fn)dlsym(lib, "nvmlShutdown");
+
+    if (!init_fn || !get_handle_fn || !set_clocks_fn || !reset_clocks_fn || !shutdown_fn) {
+        GGML_LOG_WARN("%s: NVML symbols not found, GPU clock management unavailable\n", __func__);
+        dlclose(lib);
+        g_nvml_state.lib_handle = nullptr;
+        return;
+    }
+
+    g_nvml_state.shutdown = shutdown_fn;
+    g_nvml_state.reset_clocks = reset_clocks_fn;
+
+    if (init_fn() != NVML_SUCCESS) {
+        GGML_LOG_WARN("%s: nvmlInit failed\n", __func__);
+        dlclose(lib);
+        g_nvml_state = {};
+        return;
+    }
+
+    nvml_device_t dev;
+    if (get_handle_fn(device_id, &dev) != NVML_SUCCESS) {
+        GGML_LOG_WARN("%s: could not get NVML handle for device %d\n", __func__, device_id);
+        shutdown_fn();
+        dlclose(lib);
+        g_nvml_state = {};
+        return;
+    }
+    g_nvml_state.device = dev;
+
+    if (set_clocks_fn(dev, clock_mhz, clock_mhz) != NVML_SUCCESS) {
+        GGML_LOG_WARN("%s: could not lock GPU clocks to %u MHz (requires root/admin)\n", __func__, clock_mhz);
+        shutdown_fn();
+        dlclose(lib);
+        g_nvml_state = {};
+        return;
+    }
+
+    g_nvml_state.clocks_locked = true;
+    atexit(ggml_nvml_cleanup);
+    GGML_LOG_INFO("%s: GPU %d clocks locked to %u MHz for energy efficiency\n", __func__, device_id, clock_mhz);
+}
+#endif // !GGML_USE_HIP && !GGML_USE_MUSA
+
 static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
 
 [[noreturn]]
@@ -308,6 +401,19 @@ static ggml_cuda_device_info ggml_cuda_init() {
 
     // configure logging to stdout
     // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    // DVFS-based energy optimization: lock GPU clocks to a specified frequency.
+    // Useful for bandwidth-bound inference where reducing core frequency saves energy
+    // with minimal throughput loss. Set GGML_CUDA_CLOCK_MHZ=2000 (for example) to enable.
+    const char * clock_env = getenv("GGML_CUDA_CLOCK_MHZ");
+    if (clock_env != nullptr) {
+        unsigned int clock_mhz = (unsigned int)atoi(clock_env);
+        if (clock_mhz > 0 && info.device_count > 0) {
+            ggml_nvml_set_gpu_clocks(0, clock_mhz);
+        }
+    }
+#endif
 
     return info;
 }
