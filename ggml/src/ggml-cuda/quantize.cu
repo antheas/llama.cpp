@@ -1,4 +1,5 @@
 #include "quantize.cuh"
+#include "unary.cuh"
 #include <cstdint>
 
 __launch_bounds__(CUDA_QUANTIZE_BLOCK_SIZE, 1)
@@ -309,6 +310,168 @@ void quantize_mmq_q8_1_cuda(
         case MMQ_Q8_1_DS_LAYOUT_D2S6:
             quantize_mmq_q8_1<MMQ_Q8_1_DS_LAYOUT_D2S6>
                 <<<num_blocks, block_size, 0, stream>>>(x, ids, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
+            break;
+        default:
+            GGML_ABORT("fatal error");
+            break;
+    }
+}
+
+// Fused GLU + Q8_1 quantization kernel: reads gate and up float arrays,
+// applies GLU activation (e.g. SiLU(gate)*up), and quantizes to Q8_1 in one pass.
+// Eliminates the separate GLU kernel and one global memory round-trip.
+template <mmq_q8_1_ds_layout ds_layout>
+static __global__ void quantize_mmq_q8_1_glu(
+        const float * __restrict__ x_gate, const float * __restrict__ x_up, void * __restrict__ vy,
+        const ggml_glu_op glu_op,
+        const int64_t ne00, const int64_t s01_gate, const int64_t s02_gate, const int64_t s03_gate,
+        const int64_t s01_up, const int64_t s02_up, const int64_t s03_up,
+        const int64_t ne0, const int ne1, const int ne2) {
+
+    constexpr int vals_per_scale = ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6 ? 64 : 32;
+    constexpr int vals_per_sum   = ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6 ? 16 : 32;
+
+    const int64_t i0 = ((int64_t)blockDim.x*blockIdx.y + threadIdx.x)*4;
+
+    if (i0 >= ne0) {
+        return;
+    }
+
+    const int64_t i1 = blockIdx.x;
+    const int64_t i2 = blockIdx.z % ne2;
+    const int64_t i3 = blockIdx.z / ne2;
+
+    const int64_t i00 = i0;
+    const int64_t i02 = i2;
+    const int64_t i03 = i3;
+
+    const float4 * x4_gate = (const float4 *) x_gate;
+    const float4 * x4_up   = (const float4 *) x_up;
+
+    block_q8_1_mmq * y = (block_q8_1_mmq *) vy;
+
+    const int64_t ib0 = blockIdx.z*((int64_t)gridDim.x*gridDim.y*blockDim.x/QK8_1);
+    const int64_t ib  = ib0 + (i0 / (4*QK8_1))*ne1 + blockIdx.x;
+    const int64_t iqs = i0 % (4*QK8_1);
+
+    // Load gate and up values
+    const float4 xi_gate = i0 < ne00
+        ? x4_gate[(i03*s03_gate + i02*s02_gate + i1*s01_gate + i00)/4]
+        : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+    const float4 xi_up = i0 < ne00
+        ? x4_up[(i03*s03_up + i02*s02_up + i1*s01_up + i00)/4]
+        : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+    // Apply GLU: result = activation(gate) * up
+    // For SWIGLU: silu(gate) * up.  For GEGLU: gelu(gate) * up.
+    float4 xi;
+    switch (glu_op) {
+        case GGML_GLU_OP_SWIGLU:
+            xi.x = ggml_cuda_op_silu_single(xi_gate.x) * xi_up.x;
+            xi.y = ggml_cuda_op_silu_single(xi_gate.y) * xi_up.y;
+            xi.z = ggml_cuda_op_silu_single(xi_gate.z) * xi_up.z;
+            xi.w = ggml_cuda_op_silu_single(xi_gate.w) * xi_up.w;
+            break;
+        case GGML_GLU_OP_GEGLU:
+            xi.x = ggml_cuda_op_gelu_single(xi_gate.x) * xi_up.x;
+            xi.y = ggml_cuda_op_gelu_single(xi_gate.y) * xi_up.y;
+            xi.z = ggml_cuda_op_gelu_single(xi_gate.z) * xi_up.z;
+            xi.w = ggml_cuda_op_gelu_single(xi_gate.w) * xi_up.w;
+            break;
+        case GGML_GLU_OP_SWIGLU_OAI:
+            xi.x = ggml_cuda_op_silu_single(xi_up.x) * xi_gate.x;
+            xi.y = ggml_cuda_op_silu_single(xi_up.y) * xi_gate.y;
+            xi.z = ggml_cuda_op_silu_single(xi_up.z) * xi_gate.z;
+            xi.w = ggml_cuda_op_silu_single(xi_up.w) * xi_gate.w;
+            break;
+        default:
+            xi.x = xi_gate.x * xi_up.x;
+            xi.y = xi_gate.y * xi_up.y;
+            xi.z = xi_gate.z * xi_up.z;
+            xi.w = xi_gate.w * xi_up.w;
+            break;
+    }
+
+    // Same quantization logic as quantize_mmq_q8_1
+    float amax = fabsf(xi.x);
+    amax = fmaxf(amax, fabsf(xi.y));
+    amax = fmaxf(amax, fabsf(xi.z));
+    amax = fmaxf(amax, fabsf(xi.w));
+
+#pragma unroll
+    for (int offset = vals_per_scale/8; offset > 0; offset >>= 1) {
+        amax = fmaxf(amax, __shfl_xor_sync(0xFFFFFFFF, amax, offset, WARP_SIZE));
+    }
+
+    float sum;
+    if (ds_layout != MMQ_Q8_1_DS_LAYOUT_D4) {
+        sum = xi.x + xi.y + xi.z + xi.w;
+#pragma unroll
+        for (int offset = vals_per_sum/8; offset > 0; offset >>= 1) {
+            sum += __shfl_xor_sync(0xFFFFFFFF, sum, offset, WARP_SIZE);
+        }
+    }
+
+    const float d_inv = 127.0f / amax;
+    char4 q;
+    q.x = roundf(xi.x*d_inv);
+    q.y = roundf(xi.y*d_inv);
+    q.z = roundf(xi.z*d_inv);
+    q.w = roundf(xi.w*d_inv);
+
+    char4 * yqs4 = (char4 *) y[ib].qs;
+    yqs4[iqs/4] = q;
+
+    if (ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6) {
+        if (iqs % 16 != 0 || iqs >= 96) {
+            return;
+        }
+        y[ib].d2s6[2 + iqs/16] = sum;
+        if (iqs % 64 != 0) {
+            return;
+        }
+        const float d = 1.0f / d_inv;
+        y[ib].d2s6[iqs/64] = d;
+        return;
+    }
+
+    if (iqs % 32 != 0) {
+        return;
+    }
+
+    const float d = 1.0f / d_inv;
+
+    if (ds_layout == MMQ_Q8_1_DS_LAYOUT_DS4) {
+        y[ib].ds4[iqs/32] = make_half2(d, sum);
+    } else {
+        y[ib].d4[iqs/32]  = d;
+    }
+}
+
+void quantize_mmq_q8_1_glu_cuda(
+        const float * x_gate, const float * x_up, const ggml_glu_op glu_op,
+        void * vy, const ggml_type type_src0,
+        const int64_t ne00, const int64_t s01_gate, const int64_t s02_gate, const int64_t s03_gate,
+        const int64_t s01_up, const int64_t s02_up, const int64_t s03_up,
+        const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
+    GGML_ASSERT(ne00 % 4 == 0);
+    GGML_ASSERT(ne0 % (4*QK8_1) == 0);
+
+    const int64_t block_num_y = (ne0 + 4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ - 1) / (4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ);
+    const dim3 num_blocks(ne1, block_num_y, ne2*ne3);
+    const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE_MMQ, 1, 1);
+    switch (mmq_get_q8_1_ds_layout(type_src0)) {
+        case MMQ_Q8_1_DS_LAYOUT_D4:
+            quantize_mmq_q8_1_glu<MMQ_Q8_1_DS_LAYOUT_D4>
+                <<<num_blocks, block_size, 0, stream>>>(x_gate, x_up, vy, glu_op, ne00, s01_gate, s02_gate, s03_gate, s01_up, s02_up, s03_up, ne0, ne1, ne2);
+            break;
+        case MMQ_Q8_1_DS_LAYOUT_DS4:
+            quantize_mmq_q8_1_glu<MMQ_Q8_1_DS_LAYOUT_DS4>
+                <<<num_blocks, block_size, 0, stream>>>(x_gate, x_up, vy, glu_op, ne00, s01_gate, s02_gate, s03_gate, s01_up, s02_up, s03_up, ne0, ne1, ne2);
+            break;
+        case MMQ_Q8_1_DS_LAYOUT_D2S6:
+            quantize_mmq_q8_1_glu<MMQ_Q8_1_DS_LAYOUT_D2S6>
+                <<<num_blocks, block_size, 0, stream>>>(x_gate, x_up, vy, glu_op, ne00, s01_gate, s02_gate, s03_gate, s01_up, s02_up, s03_up, ne0, ne1, ne2);
             break;
         default:
             GGML_ABORT("fatal error");

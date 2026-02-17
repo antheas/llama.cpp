@@ -132,6 +132,21 @@ void ggml_cuda_mul_mat_q(
                 quantize_mmq_mxfp4_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
                                         ne11, ne12, ne13, stream);
 
+            } else if (src1->op == GGML_OP_GLU && src1->src[0] && src1->src[1]
+                       && src1->src[0]->data && src1->src[1]->data) {
+                // Fused GLU + quantize: read gate and up results directly, apply GLU and quantize in one kernel.
+                const float * gate_d = (const float *) src1->src[0]->data;
+                const float * up_d   = (const float *) src1->src[1]->data;
+                const ggml_glu_op glu_op = ggml_get_glu_op(src1);
+                const int64_t s11_gate = src1->src[0]->nb[1] / sizeof(float);
+                const int64_t s12_gate = src1->src[0]->nb[2] / sizeof(float);
+                const int64_t s13_gate = src1->src[0]->nb[3] / sizeof(float);
+                const int64_t s11_up   = src1->src[1]->nb[1] / sizeof(float);
+                const int64_t s12_up   = src1->src[1]->nb[2] / sizeof(float);
+                const int64_t s13_up   = src1->src[1]->nb[3] / sizeof(float);
+                quantize_mmq_q8_1_glu_cuda(gate_d, up_d, glu_op, src1_q8_1.get(), src0->type,
+                                           ne10, s11_gate, s12_gate, s13_gate, s11_up, s12_up, s13_up,
+                                           ne10_padded, ne11, ne12, ne13, stream);
             } else {
                 quantize_mmq_q8_1_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
                                        ne11, ne12, ne13, stream);
